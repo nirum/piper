@@ -1,3 +1,5 @@
+![Piper](header.jpeg)
+
 # Piper
 
 A Unix-native CLI tool that reads text from stdin, sends it to an LLM, and streams the response to stdout. Composable, pipe-friendly, single-binary.
