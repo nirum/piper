@@ -28,7 +28,7 @@ func NewOpenAI(apiKey, baseURL string) *OpenAI {
 	return &OpenAI{
 		apiKey:  apiKey,
 		baseURL: baseURL,
-		client:  &http.Client{},
+		client:  &http.Client{Timeout: DefaultTimeout},
 	}
 }
 

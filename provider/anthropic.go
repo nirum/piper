@@ -26,7 +26,7 @@ func NewAnthropic(apiKey string) *Anthropic {
 	return &Anthropic{
 		apiKey:  apiKey,
 		baseURL: anthropicBaseURL,
-		client:  &http.Client{},
+		client:  &http.Client{Timeout: DefaultTimeout},
 	}
 }
 

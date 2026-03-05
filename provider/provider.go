@@ -3,7 +3,12 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 )
+
+// DefaultTimeout is the default HTTP client timeout for LLM requests.
+// It is set high enough to accommodate slow streaming responses.
+const DefaultTimeout = 10 * time.Minute
 
 // Request represents a completion request to any provider.
 type Request struct {
