@@ -14,9 +14,10 @@ import (
 const defaultOpenAIBaseURL = "https://api.openai.com"
 
 type OpenAI struct {
-	apiKey  string
-	baseURL string
-	client  *http.Client
+	apiKey     string
+	baseURL    string
+	client     *http.Client
+	maxRetries int
 }
 
 func NewOpenAI(apiKey, baseURL string) *OpenAI {
@@ -26,11 +27,15 @@ func NewOpenAI(apiKey, baseURL string) *OpenAI {
 	// Trim trailing slash for consistent URL construction.
 	baseURL = strings.TrimRight(baseURL, "/")
 	return &OpenAI{
-		apiKey:  apiKey,
-		baseURL: baseURL,
-		client:  &http.Client{},
+		apiKey:     apiKey,
+		baseURL:    baseURL,
+		client:     &http.Client{},
+		maxRetries: defaultMaxRetries,
 	}
 }
+
+// SetRetries sets the maximum number of retry attempts for transient errors.
+func (o *OpenAI) SetRetries(n int) { o.maxRetries = n }
 
 // OpenAI API types.
 type openaiRequest struct {
@@ -138,18 +143,19 @@ func (o *OpenAI) do(ctx context.Context, body interface{}) (*http.Response, erro
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST",
-		o.baseURL+"/v1/chat/completions", bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	if o.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+o.apiKey)
-	}
-
-	return o.client.Do(httpReq)
+	return withRetry(ctx, o.maxRetries, func() (*http.Response, error) {
+		// Re-create the request for each attempt: the body reader is consumed on send.
+		httpReq, err := http.NewRequestWithContext(ctx, "POST",
+			o.baseURL+"/v1/chat/completions", bytes.NewReader(payload))
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		if o.apiKey != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+o.apiKey)
+		}
+		return o.client.Do(httpReq)
+	})
 }
 
 func (o *OpenAI) readSSE(ctx context.Context, body io.ReadCloser, ch chan<- StreamEvent) {

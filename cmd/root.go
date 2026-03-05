@@ -43,6 +43,7 @@ Flags:
   -t, --tokens    int      Max output tokens (default: 4096)
   -p, --provider  string   Provider: anthropic, openai (default: anthropic)
       --base-url  string   API base URL (for OpenAI-compat providers)
+      --retries   int      Max retries on rate-limit/server errors (default: 3)
   -r, --raw                Disable markdown rendering, raw text (default)
       --no-stream          Disable streaming
   -v, --verbose            Metadata to stderr
@@ -59,6 +60,7 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 	tokensFlag := fs.IntP("tokens", "t", 0, "Max output tokens")
 	providerFlag := fs.StringP("provider", "p", "", "Provider: anthropic, openai")
 	baseURLFlag := fs.String("base-url", "", "API base URL")
+	retriesFlag := fs.Int("retries", -1, "Max retries on transient errors (-1 = use default)")
 	_ = fs.BoolP("raw", "r", true, "Disable markdown rendering")
 	noStream := fs.Bool("no-stream", false, "Disable streaming")
 	verbose := fs.BoolP("verbose", "v", false, "Metadata to stderr")
@@ -144,6 +146,12 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 	if err != nil {
 		fmt.Fprintf(stderr, "piper: %v\n", err)
 		return 2
+	}
+
+	if *retriesFlag >= 0 {
+		if r, ok := p.(provider.Retryable); ok {
+			r.SetRetries(*retriesFlag)
+		}
 	}
 
 	req := &provider.Request{

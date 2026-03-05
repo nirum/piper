@@ -49,6 +49,11 @@ type Provider interface {
 	Stream(ctx context.Context, req *Request) (<-chan StreamEvent, error)
 }
 
+// Retryable is an optional interface providers may implement to configure retry behavior.
+type Retryable interface {
+	SetRetries(n int)
+}
+
 // New creates a provider instance based on name.
 func New(name, apiKey, baseURL string) (Provider, error) {
 	switch name {

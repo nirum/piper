@@ -17,18 +17,23 @@ const (
 )
 
 type Anthropic struct {
-	apiKey  string
-	baseURL string
-	client  *http.Client
+	apiKey     string
+	baseURL    string
+	client     *http.Client
+	maxRetries int
 }
 
 func NewAnthropic(apiKey string) *Anthropic {
 	return &Anthropic{
-		apiKey:  apiKey,
-		baseURL: anthropicBaseURL,
-		client:  &http.Client{},
+		apiKey:     apiKey,
+		baseURL:    anthropicBaseURL,
+		client:     &http.Client{},
+		maxRetries: defaultMaxRetries,
 	}
 }
+
+// SetRetries sets the maximum number of retry attempts for transient errors.
+func (a *Anthropic) SetRetries(n int) { a.maxRetries = n }
 
 // Anthropic API request/response types.
 type anthropicRequest struct {
@@ -123,17 +128,18 @@ func (a *Anthropic) do(ctx context.Context, body interface{}) (*http.Response, e
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST",
-		a.baseURL+"/v1/messages", bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", a.apiKey)
-	httpReq.Header.Set("anthropic-version", anthropicVersion)
-
-	return a.client.Do(httpReq)
+	return withRetry(ctx, a.maxRetries, func() (*http.Response, error) {
+		// Re-create the request for each attempt: the body reader is consumed on send.
+		httpReq, err := http.NewRequestWithContext(ctx, "POST",
+			a.baseURL+"/v1/messages", bytes.NewReader(payload))
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("x-api-key", a.apiKey)
+		httpReq.Header.Set("anthropic-version", anthropicVersion)
+		return a.client.Do(httpReq)
+	})
 }
 
 func (a *Anthropic) readSSE(ctx context.Context, body io.ReadCloser, ch chan<- StreamEvent) {
