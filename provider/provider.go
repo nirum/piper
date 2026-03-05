@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"io"
 )
 
 // Request represents a completion request to any provider.
@@ -47,6 +48,11 @@ type Provider interface {
 	Complete(ctx context.Context, req *Request) (*Response, error)
 	// Stream sends a streaming completion request.
 	Stream(ctx context.Context, req *Request) (<-chan StreamEvent, error)
+}
+
+// Debuggable is an optional interface providers may implement to accept a debug writer.
+type Debuggable interface {
+	SetDebug(w io.Writer)
 }
 
 // New creates a provider instance based on name.

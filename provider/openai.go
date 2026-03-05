@@ -17,6 +17,7 @@ type OpenAI struct {
 	apiKey  string
 	baseURL string
 	client  *http.Client
+	debug   io.Writer
 }
 
 func NewOpenAI(apiKey, baseURL string) *OpenAI {
@@ -31,6 +32,9 @@ func NewOpenAI(apiKey, baseURL string) *OpenAI {
 		client:  &http.Client{},
 	}
 }
+
+// SetDebug sets a writer for debug output (e.g. SSE parse errors). Pass nil to disable.
+func (o *OpenAI) SetDebug(w io.Writer) { o.debug = w }
 
 // OpenAI API types.
 type openaiRequest struct {
@@ -187,6 +191,9 @@ func (o *OpenAI) readSSE(ctx context.Context, body io.ReadCloser, ch chan<- Stre
 		}
 
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			if o.debug != nil {
+				fmt.Fprintf(o.debug, "piper: debug: openai SSE parse error: %v (data=%q)\n", err, data)
+			}
 			continue
 		}
 

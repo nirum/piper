@@ -146,6 +146,12 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 		return 2
 	}
 
+	if *verbose {
+		if d, ok := p.(provider.Debuggable); ok {
+			d.SetDebug(stderr)
+		}
+	}
+
 	req := &provider.Request{
 		Model:     model,
 		System:    system,

@@ -20,6 +20,7 @@ type Anthropic struct {
 	apiKey  string
 	baseURL string
 	client  *http.Client
+	debug   io.Writer
 }
 
 func NewAnthropic(apiKey string) *Anthropic {
@@ -29,6 +30,9 @@ func NewAnthropic(apiKey string) *Anthropic {
 		client:  &http.Client{},
 	}
 }
+
+// SetDebug sets a writer for debug output (e.g. SSE parse errors). Pass nil to disable.
+func (a *Anthropic) SetDebug(w io.Writer) { a.debug = w }
 
 // Anthropic API request/response types.
 type anthropicRequest struct {
@@ -173,6 +177,9 @@ func (a *Anthropic) readSSE(ctx context.Context, body io.ReadCloser, ch chan<- S
 		}
 
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			if a.debug != nil {
+				fmt.Fprintf(a.debug, "piper: debug: anthropic SSE parse error: %v (data=%q)\n", err, data)
+			}
 			continue
 		}
 
