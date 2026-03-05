@@ -46,6 +46,7 @@ Flags:
   -r, --raw                Disable markdown rendering, raw text (default)
       --no-stream          Disable streaming
   -v, --verbose            Metadata to stderr
+      --debug              Log full request/response bodies to stderr (redacts keys)
       --version            Print version`
 
 // Run is the main entrypoint. It returns an exit code.
@@ -62,6 +63,7 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 	_ = fs.BoolP("raw", "r", true, "Disable markdown rendering")
 	noStream := fs.Bool("no-stream", false, "Disable streaming")
 	verbose := fs.BoolP("verbose", "v", false, "Metadata to stderr")
+	debugMode := fs.Bool("debug", false, "Log full request/response bodies to stderr")
 	showVersion := fs.Bool("version", false, "Print version")
 
 	if err := fs.Parse(args); err != nil {
@@ -144,6 +146,12 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 	if err != nil {
 		fmt.Fprintf(stderr, "piper: %v\n", err)
 		return 2
+	}
+
+	if *debugMode {
+		if d, ok := p.(provider.Debuggable); ok {
+			d.SetDebug(stderr)
+		}
 	}
 
 	req := &provider.Request{

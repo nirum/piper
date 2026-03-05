@@ -30,6 +30,9 @@ func NewAnthropic(apiKey string) *Anthropic {
 	}
 }
 
+// SetDebug activates request/response debug logging to w. Pass nil to disable.
+func (a *Anthropic) SetDebug(w io.Writer) { wrapDebug(a.client, w) }
+
 // Anthropic API request/response types.
 type anthropicRequest struct {
 	Model     string    `json:"model"`

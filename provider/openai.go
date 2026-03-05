@@ -32,6 +32,9 @@ func NewOpenAI(apiKey, baseURL string) *OpenAI {
 	}
 }
 
+// SetDebug activates request/response debug logging to w. Pass nil to disable.
+func (o *OpenAI) SetDebug(w io.Writer) { wrapDebug(o.client, w) }
+
 // OpenAI API types.
 type openaiRequest struct {
 	Model     string          `json:"model"`
