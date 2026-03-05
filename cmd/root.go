@@ -38,15 +38,16 @@ Examples:
   echo "hello" | piper -m gpt-4o -p openai "respond"
 
 Flags:
-  -m, --model     string   Model (default: claude-sonnet-4-20250514)
-  -s, --system    string   System prompt (default: "You are a helpful assistant.")
-  -t, --tokens    int      Max output tokens (default: 4096)
-  -p, --provider  string   Provider: anthropic, openai (default: anthropic)
-      --base-url  string   API base URL (for OpenAI-compat providers)
-  -r, --raw                Disable markdown rendering, raw text (default)
-      --no-stream          Disable streaming
-  -v, --verbose            Metadata to stderr
-      --version            Print version`
+  -m, --model        string   Model (default: claude-sonnet-4-20250514)
+  -s, --system       string   System prompt (default: "You are a helpful assistant.")
+  -t, --tokens       int      Max output tokens (default: 4096)
+  -p, --provider     string   Provider: anthropic, openai (default: anthropic)
+      --base-url     string   API base URL (for OpenAI-compat providers)
+  -r, --raw                   Disable markdown rendering, raw text (default)
+      --no-stream             Disable streaming
+  -v, --verbose               Metadata to stderr
+      --completion   string   Print shell completion script (zsh, bash, fish)
+      --version               Print version`
 
 // Run is the main entrypoint. It returns an exit code.
 func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.Writer, version string) int {
@@ -62,6 +63,7 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 	_ = fs.BoolP("raw", "r", true, "Disable markdown rendering")
 	noStream := fs.Bool("no-stream", false, "Disable streaming")
 	verbose := fs.BoolP("verbose", "v", false, "Metadata to stderr")
+	completionFlag := fs.String("completion", "", "Print shell completion script (zsh, bash, fish)")
 	showVersion := fs.Bool("version", false, "Print version")
 
 	if err := fs.Parse(args); err != nil {
@@ -72,6 +74,10 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 	if *showVersion {
 		fmt.Fprintf(stdout, "piper %s\n", version)
 		return 0
+	}
+
+	if *completionFlag != "" {
+		return printCompletion(stdout, stderr, *completionFlag)
 	}
 
 	// Check stdin is not a TTY with no positional args.
