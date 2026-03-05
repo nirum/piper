@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -37,12 +38,17 @@ Examples:
   git diff main | piper "review for bugs"
   echo "hello" | piper -m gpt-4o -p openai "respond"
 
+  # Multi-turn conversation (--chat mode):
+  echo '[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]' \
+    | piper --chat "what did I say first?"
+
 Flags:
   -m, --model     string   Model (default: claude-sonnet-4-20250514)
   -s, --system    string   System prompt (default: "You are a helpful assistant.")
   -t, --tokens    int      Max output tokens (default: 4096)
   -p, --provider  string   Provider: anthropic, openai (default: anthropic)
       --base-url  string   API base URL (for OpenAI-compat providers)
+      --chat               Read conversation history as JSON from stdin
   -r, --raw                Disable markdown rendering, raw text (default)
       --no-stream          Disable streaming
   -v, --verbose            Metadata to stderr
@@ -59,6 +65,7 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 	tokensFlag := fs.IntP("tokens", "t", 0, "Max output tokens")
 	providerFlag := fs.StringP("provider", "p", "", "Provider: anthropic, openai")
 	baseURLFlag := fs.String("base-url", "", "API base URL")
+	chatMode := fs.Bool("chat", false, "Read conversation history as JSON from stdin")
 	_ = fs.BoolP("raw", "r", true, "Disable markdown rendering")
 	noStream := fs.Bool("no-stream", false, "Disable streaming")
 	verbose := fs.BoolP("verbose", "v", false, "Metadata to stderr")
@@ -121,22 +128,47 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 	}
 
 	// Read stdin.
-	var stdinContent string
+	var stdinData []byte
 	if !isTTY {
-		data, err := io.ReadAll(stdin)
+		var err error
+		stdinData, err = io.ReadAll(stdin)
 		if err != nil {
 			fmt.Fprintf(stderr, "piper: read stdin: %v\n", err)
 			return 1
 		}
-		stdinContent = string(data)
 	}
 
-	// Build user message: context args + stdin.
-	userMessage := buildUserMessage(positional, stdinContent)
-	if strings.TrimSpace(userMessage) == "" {
-		fmt.Fprintln(stderr, "piper: no input provided")
-		fmt.Fprintln(stderr, usage)
-		return 1
+	// Build the message list.
+	var messages []provider.Message
+	if *chatMode {
+		// Chat mode: stdin is a JSON array of prior messages.
+		if len(stdinData) == 0 {
+			fmt.Fprintln(stderr, "piper: --chat requires conversation JSON on stdin")
+			return 1
+		}
+		if err := json.Unmarshal(stdinData, &messages); err != nil {
+			fmt.Fprintf(stderr, "piper: --chat: parse conversation JSON: %v\n", err)
+			return 1
+		}
+		// Append positional args as a new user turn if provided.
+		if len(positional) > 0 {
+			messages = append(messages, provider.Message{
+				Role:    "user",
+				Content: strings.Join(positional, " "),
+			})
+		}
+		if len(messages) == 0 {
+			fmt.Fprintln(stderr, "piper: --chat: conversation is empty")
+			return 1
+		}
+	} else {
+		userMessage := buildUserMessage(positional, string(stdinData))
+		if strings.TrimSpace(userMessage) == "" {
+			fmt.Fprintln(stderr, "piper: no input provided")
+			fmt.Fprintln(stderr, usage)
+			return 1
+		}
+		messages = []provider.Message{{Role: "user", Content: userMessage}}
 	}
 
 	// Create provider.
@@ -150,9 +182,7 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 		Model:     model,
 		System:    system,
 		MaxTokens: maxTokens,
-		Messages: []provider.Message{
-			{Role: "user", Content: userMessage},
-		},
+		Messages:  messages,
 	}
 
 	if *verbose {
