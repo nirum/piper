@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const (
@@ -29,6 +30,9 @@ func NewAnthropic(apiKey string) *Anthropic {
 		client:  &http.Client{},
 	}
 }
+
+// SetTimeout configures the HTTP client timeout. Zero means no timeout.
+func (a *Anthropic) SetTimeout(d time.Duration) { a.client.Timeout = d }
 
 // Anthropic API request/response types.
 type anthropicRequest struct {

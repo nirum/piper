@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -27,8 +28,9 @@ type Config struct {
 }
 
 type Defaults struct {
-	MaxTokens int    `toml:"max_tokens"`
-	System    string `toml:"system"`
+	MaxTokens int           `toml:"max_tokens"`
+	System    string        `toml:"system"`
+	Timeout   time.Duration `toml:"timeout"`
 }
 
 // Load reads config from the standard path (~/.config/piper/config.toml).

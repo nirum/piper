@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const defaultOpenAIBaseURL = "https://api.openai.com"
@@ -31,6 +32,9 @@ func NewOpenAI(apiKey, baseURL string) *OpenAI {
 		client:  &http.Client{},
 	}
 }
+
+// SetTimeout configures the HTTP client timeout. Zero means no timeout.
+func (o *OpenAI) SetTimeout(d time.Duration) { o.client.Timeout = d }
 
 // OpenAI API types.
 type openaiRequest struct {

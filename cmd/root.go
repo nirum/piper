@@ -38,15 +38,16 @@ Examples:
   echo "hello" | piper -m gpt-4o -p openai "respond"
 
 Flags:
-  -m, --model     string   Model (default: claude-sonnet-4-20250514)
-  -s, --system    string   System prompt (default: "You are a helpful assistant.")
-  -t, --tokens    int      Max output tokens (default: 4096)
-  -p, --provider  string   Provider: anthropic, openai (default: anthropic)
-      --base-url  string   API base URL (for OpenAI-compat providers)
-  -r, --raw                Disable markdown rendering, raw text (default)
-      --no-stream          Disable streaming
-  -v, --verbose            Metadata to stderr
-      --version            Print version`
+  -m, --model     string     Model (default: claude-sonnet-4-20250514)
+  -s, --system    string     System prompt (default: "You are a helpful assistant.")
+  -t, --tokens    int        Max output tokens (default: 4096)
+  -p, --provider  string     Provider: anthropic, openai (default: anthropic)
+      --base-url  string     API base URL (for OpenAI-compat providers)
+      --timeout   duration   Request timeout, e.g. 30s, 5m (default: 10m)
+  -r, --raw                  Disable markdown rendering, raw text (default)
+      --no-stream            Disable streaming
+  -v, --verbose              Metadata to stderr
+      --version              Print version`
 
 // Run is the main entrypoint. It returns an exit code.
 func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.Writer, version string) int {
@@ -59,6 +60,7 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 	tokensFlag := fs.IntP("tokens", "t", 0, "Max output tokens")
 	providerFlag := fs.StringP("provider", "p", "", "Provider: anthropic, openai")
 	baseURLFlag := fs.String("base-url", "", "API base URL")
+	timeoutFlag := fs.Duration("timeout", 0, "Request timeout (e.g. 30s, 5m)")
 	_ = fs.BoolP("raw", "r", true, "Disable markdown rendering")
 	noStream := fs.Bool("no-stream", false, "Disable streaming")
 	verbose := fs.BoolP("verbose", "v", false, "Metadata to stderr")
@@ -112,6 +114,11 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 		baseURL = *baseURLFlag
 	}
 
+	timeout := cfg.Defaults.Timeout
+	if *timeoutFlag != 0 {
+		timeout = *timeoutFlag
+	}
+
 	// Resolve API key.
 	apiKey := cfg.ResolveAPIKey(providerName)
 	if apiKey == "" {
@@ -144,6 +151,12 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 	if err != nil {
 		fmt.Fprintf(stderr, "piper: %v\n", err)
 		return 2
+	}
+
+	if timeout > 0 {
+		if t, ok := p.(provider.Timeoutable); ok {
+			t.SetTimeout(timeout)
+		}
 	}
 
 	req := &provider.Request{
