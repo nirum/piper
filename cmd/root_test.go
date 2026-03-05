@@ -1,6 +1,11 @@
 package cmd
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -75,5 +80,171 @@ func TestRunVersion(t *testing.T) {
 	}
 	if got := stdout.String(); got != "piper 1.2.3\n" {
 		t.Errorf("output = %q, want %q", got, "piper 1.2.3\n")
+	}
+}
+
+func TestRun_BadFlag(t *testing.T) {
+	var stdout, stderr strings.Builder
+	code := Run(context.Background(), []string{"--unknown-flag"}, nil, &stdout, &stderr, "test")
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+}
+
+func TestRun_MissingAPIKey(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	var stdout, stderr strings.Builder
+	code := Run(context.Background(), []string{"-p", "openai"}, nil, &stdout, &stderr, "test")
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "no API key") {
+		t.Errorf("stderr %q should contain 'no API key'", stderr.String())
+	}
+}
+
+func TestRun_StreamMode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		events := []string{
+			`data: {"choices":[{"delta":{"content":"Hello"}}]}`,
+			`data: {"choices":[{"delta":{"content":", world!"}}]}`,
+			`data: [DONE]`,
+		}
+		for _, ev := range events {
+			fmt.Fprintln(w, ev)
+			fmt.Fprintln(w)
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	rd, wr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wr.WriteString("hello")
+	wr.Close()
+
+	var stdout, stderr strings.Builder
+	code := Run(context.Background(), []string{
+		"-p", "openai", "--base-url", server.URL, "summarize",
+	}, rd, &stdout, &stderr, "test")
+	rd.Close()
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0; stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Hello, world!") {
+		t.Errorf("stdout %q should contain 'Hello, world!'", stdout.String())
+	}
+}
+
+func TestRun_NoStreamMode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"Done!"}}],"usage":{"prompt_tokens":5,"completion_tokens":2},"model":"gpt-4o"}`)
+	}))
+	defer server.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	rd, wr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wr.WriteString("hello")
+	wr.Close()
+
+	var stdout, stderr strings.Builder
+	code := Run(context.Background(), []string{
+		"-p", "openai", "--base-url", server.URL, "--no-stream", "summarize",
+	}, rd, &stdout, &stderr, "test")
+	rd.Close()
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0; stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Done!") {
+		t.Errorf("stdout %q should contain 'Done!'", stdout.String())
+	}
+}
+
+func TestRun_StreamError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":{"type":"server_error","message":"Internal error"}}`)
+	}))
+	defer server.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	rd, wr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wr.WriteString("hello")
+	wr.Close()
+
+	var stdout, stderr strings.Builder
+	code := Run(context.Background(), []string{
+		"-p", "openai", "--base-url", server.URL, "summarize",
+	}, rd, &stdout, &stderr, "test")
+	rd.Close()
+
+	if code != 3 {
+		t.Errorf("exit code = %d, want 3; stderr: %s", code, stderr.String())
+	}
+}
+
+func TestRun_VerboseMode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		events := []string{
+			`data: {"choices":[{"delta":{"content":"Hi"}}]}`,
+			`data: [DONE]`,
+		}
+		for _, ev := range events {
+			fmt.Fprintln(w, ev)
+			fmt.Fprintln(w)
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	rd, wr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wr.WriteString("hello")
+	wr.Close()
+
+	var stdout, stderr strings.Builder
+	code := Run(context.Background(), []string{
+		"-p", "openai", "--base-url", server.URL, "-v", "summarize",
+	}, rd, &stdout, &stderr, "test")
+	rd.Close()
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0; stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "provider=openai") {
+		t.Errorf("stderr %q should contain 'provider=openai'", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "latency=") {
+		t.Errorf("stderr %q should contain 'latency='", stderr.String())
 	}
 }

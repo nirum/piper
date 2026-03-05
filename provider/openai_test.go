@@ -138,6 +138,57 @@ func TestOpenAI_Error(t *testing.T) {
 	}
 }
 
+func TestOpenAI_StreamContextCancel(t *testing.T) {
+	ready := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Hi"}}]}`)
+		fmt.Fprintln(w)
+		flusher.Flush()
+		close(ready)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	o := NewOpenAI("test-key", server.URL)
+	ch, err := o.Stream(ctx, &Request{
+		Model:     "gpt-4o",
+		MaxTokens: 100,
+		Messages:  []Message{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream() error: %v", err)
+	}
+
+	<-ready
+	cancel()
+	// Drain channel — must close without deadlock.
+	for range ch {
+	}
+}
+
+func TestOpenAI_StreamNonOKStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, `{"error":{"type":"server_error","message":"Service unavailable"}}`)
+	}))
+	defer server.Close()
+
+	o := NewOpenAI("test-key", server.URL)
+	_, err := o.Stream(context.Background(), &Request{
+		Model:     "gpt-4o",
+		MaxTokens: 100,
+		Messages:  []Message{{Role: "user", Content: "hello"}},
+	})
+	if err == nil {
+		t.Fatal("expected error from Stream(), got nil")
+	}
+}
+
 func TestOpenAI_NoAPIKey(t *testing.T) {
 	// OpenAI provider should still make the request even without a key
 	// (useful for local models like Ollama that don't need auth).
