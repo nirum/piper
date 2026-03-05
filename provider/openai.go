@@ -210,11 +210,19 @@ func (o *OpenAI) readSSE(ctx context.Context, body io.ReadCloser, ch chan<- Stre
 func (o *OpenAI) parseError(resp *http.Response) error {
 	bodyBytes, _ := io.ReadAll(resp.Body)
 
-	var apiErr openaiError
-	if json.Unmarshal(bodyBytes, &apiErr) == nil && apiErr.Error.Message != "" {
-		return fmt.Errorf("openai API error (%d): %s: %s",
-			resp.StatusCode, apiErr.Error.Type, apiErr.Error.Message)
+	var parsed openaiError
+	if json.Unmarshal(bodyBytes, &parsed) == nil && parsed.Error.Message != "" {
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			ErrType:    parsed.Error.Type,
+			Message:    parsed.Error.Message,
+			Provider:   "openai",
+		}
 	}
 
-	return fmt.Errorf("openai API error (%d): %s", resp.StatusCode, string(bodyBytes))
+	return &APIError{
+		StatusCode: resp.StatusCode,
+		Message:    string(bodyBytes),
+		Provider:   "openai",
+	}
 }

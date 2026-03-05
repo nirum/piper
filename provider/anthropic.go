@@ -215,11 +215,19 @@ func (a *Anthropic) readSSE(ctx context.Context, body io.ReadCloser, ch chan<- S
 func (a *Anthropic) parseError(resp *http.Response) error {
 	bodyBytes, _ := io.ReadAll(resp.Body)
 
-	var apiErr anthropicError
-	if json.Unmarshal(bodyBytes, &apiErr) == nil && apiErr.Error.Message != "" {
-		return fmt.Errorf("anthropic API error (%d): %s: %s",
-			resp.StatusCode, apiErr.Error.Type, apiErr.Error.Message)
+	var parsed anthropicError
+	if json.Unmarshal(bodyBytes, &parsed) == nil && parsed.Error.Message != "" {
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			ErrType:    parsed.Error.Type,
+			Message:    parsed.Error.Message,
+			Provider:   "anthropic",
+		}
 	}
 
-	return fmt.Errorf("anthropic API error (%d): %s", resp.StatusCode, string(bodyBytes))
+	return &APIError{
+		StatusCode: resp.StatusCode,
+		Message:    string(bodyBytes),
+		Provider:   "anthropic",
+	}
 }

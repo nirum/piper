@@ -174,6 +174,9 @@ func doComplete(ctx context.Context, p provider.Provider, req *provider.Request,
 			return 4
 		}
 		fmt.Fprintf(stderr, "piper: %v\n", err)
+		if provider.IsAuthError(err) {
+			return 2
+		}
 		return 3
 	}
 
@@ -196,6 +199,9 @@ func doStream(ctx context.Context, p provider.Provider, req *provider.Request, s
 			return 4
 		}
 		fmt.Fprintf(stderr, "piper: %v\n", err)
+		if provider.IsAuthError(err) {
+			return 2
+		}
 		return 3
 	}
 
