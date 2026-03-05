@@ -157,6 +157,7 @@ func (o *OpenAI) readSSE(ctx context.Context, body io.ReadCloser, ch chan<- Stre
 	defer body.Close()
 
 	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB max token size
 
 	for scanner.Scan() {
 		line := scanner.Text()
