@@ -91,6 +91,96 @@ func TestResolveAPIKey_EnvOverridesConfig(t *testing.T) {
 	}
 }
 
+func TestApplyProfile(t *testing.T) {
+	cfg := &Config{
+		Provider: DefaultProvider,
+		Model:    DefaultModel,
+		Defaults: Defaults{MaxTokens: DefaultMaxTokens, System: DefaultSystem},
+		Profiles: map[string]Profile{
+			"coding": {
+				Model: "claude-opus-4-20250514",
+				Defaults: Defaults{
+					System: "You are a senior engineer.",
+				},
+			},
+			"quick": {
+				Model:    "claude-haiku-4-5-20251001",
+				Defaults: Defaults{MaxTokens: 512},
+			},
+		},
+	}
+
+	// Unknown profile returns false.
+	if cfg.ApplyProfile("nonexistent") {
+		t.Error("expected ApplyProfile to return false for unknown profile")
+	}
+
+	// Applying "coding" overrides model and system but not max_tokens.
+	ok := cfg.ApplyProfile("coding")
+	if !ok {
+		t.Fatal("expected ApplyProfile to return true for 'coding'")
+	}
+	if cfg.Model != "claude-opus-4-20250514" {
+		t.Errorf("model = %q, want claude-opus-4-20250514", cfg.Model)
+	}
+	if cfg.Defaults.System != "You are a senior engineer." {
+		t.Errorf("system = %q, want 'You are a senior engineer.'", cfg.Defaults.System)
+	}
+	if cfg.Defaults.MaxTokens != DefaultMaxTokens {
+		t.Errorf("max_tokens = %d, want %d (unchanged)", cfg.Defaults.MaxTokens, DefaultMaxTokens)
+	}
+}
+
+func TestLoadProfilesFromFile(t *testing.T) {
+	dir := t.TempDir()
+	piperDir := filepath.Join(dir, "piper")
+	os.MkdirAll(piperDir, 0700)
+	cfgFile := filepath.Join(piperDir, "config.toml")
+
+	content := `
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+
+[profiles.coding]
+model = "claude-opus-4-20250514"
+
+[profiles.coding.defaults]
+system = "You are a senior engineer."
+
+[profiles.quick]
+model = "claude-haiku-4-5-20251001"
+
+[profiles.quick.defaults]
+max_tokens = 512
+`
+	if err := os.WriteFile(cfgFile, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	cfg := Load(os.Stderr)
+
+	if len(cfg.Profiles) != 2 {
+		t.Fatalf("profiles count = %d, want 2", len(cfg.Profiles))
+	}
+
+	codingProfile, ok := cfg.Profiles["coding"]
+	if !ok {
+		t.Fatal("expected 'coding' profile")
+	}
+	if codingProfile.Model != "claude-opus-4-20250514" {
+		t.Errorf("coding model = %q, want claude-opus-4-20250514", codingProfile.Model)
+	}
+	if codingProfile.Defaults.System != "You are a senior engineer." {
+		t.Errorf("coding system = %q, want 'You are a senior engineer.'", codingProfile.Defaults.System)
+	}
+
+	quickProfile := cfg.Profiles["quick"]
+	if quickProfile.Defaults.MaxTokens != 512 {
+		t.Errorf("quick max_tokens = %d, want 512", quickProfile.Defaults.MaxTokens)
+	}
+}
+
 func TestCheckPermissions(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

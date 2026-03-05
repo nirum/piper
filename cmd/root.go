@@ -36,6 +36,7 @@ Examples:
   cat README.md | piper "summarize in 3 bullets"
   git diff main | piper "review for bugs"
   echo "hello" | piper -m gpt-4o -p openai "respond"
+  cat code.py | piper --profile coding "review"
 
 Flags:
   -m, --model     string   Model (default: claude-sonnet-4-20250514)
@@ -43,6 +44,7 @@ Flags:
   -t, --tokens    int      Max output tokens (default: 4096)
   -p, --provider  string   Provider: anthropic, openai (default: anthropic)
       --base-url  string   API base URL (for OpenAI-compat providers)
+      --profile   string   Named config profile to use
   -r, --raw                Disable markdown rendering, raw text (default)
       --no-stream          Disable streaming
   -v, --verbose            Metadata to stderr
@@ -59,6 +61,7 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 	tokensFlag := fs.IntP("tokens", "t", 0, "Max output tokens")
 	providerFlag := fs.StringP("provider", "p", "", "Provider: anthropic, openai")
 	baseURLFlag := fs.String("base-url", "", "API base URL")
+	profileFlag := fs.String("profile", "", "Named config profile")
 	_ = fs.BoolP("raw", "r", true, "Disable markdown rendering")
 	noStream := fs.Bool("no-stream", false, "Disable streaming")
 	verbose := fs.BoolP("verbose", "v", false, "Metadata to stderr")
@@ -85,6 +88,14 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 
 	// Load config.
 	cfg := config.Load(stderr)
+
+	// Apply named profile overrides before flag overrides.
+	if *profileFlag != "" {
+		if !cfg.ApplyProfile(*profileFlag) {
+			fmt.Fprintf(stderr, "piper: unknown profile %q\n", *profileFlag)
+			return 1
+		}
+	}
 
 	// Apply flag overrides.
 	providerName := cfg.Provider

@@ -24,11 +24,49 @@ type Config struct {
 	BaseURL  string `toml:"base_url"`
 
 	Defaults Defaults `toml:"defaults"`
+	Profiles map[string]Profile `toml:"profiles"`
 }
 
 type Defaults struct {
 	MaxTokens int    `toml:"max_tokens"`
 	System    string `toml:"system"`
+}
+
+// Profile holds per-profile overrides. Zero values mean "use the top-level default".
+type Profile struct {
+	Provider  string   `toml:"provider"`
+	Model     string   `toml:"model"`
+	APIKey    string   `toml:"api_key"`
+	BaseURL   string   `toml:"base_url"`
+	Defaults  Defaults `toml:"defaults"`
+}
+
+// ApplyProfile merges the named profile's non-zero fields into cfg.
+// Returns false if the profile name is not found.
+func (c *Config) ApplyProfile(name string) bool {
+	p, ok := c.Profiles[name]
+	if !ok {
+		return false
+	}
+	if p.Provider != "" {
+		c.Provider = p.Provider
+	}
+	if p.Model != "" {
+		c.Model = p.Model
+	}
+	if p.APIKey != "" {
+		c.APIKey = p.APIKey
+	}
+	if p.BaseURL != "" {
+		c.BaseURL = p.BaseURL
+	}
+	if p.Defaults.MaxTokens != 0 {
+		c.Defaults.MaxTokens = p.Defaults.MaxTokens
+	}
+	if p.Defaults.System != "" {
+		c.Defaults.System = p.Defaults.System
+	}
+	return true
 }
 
 // Load reads config from the standard path (~/.config/piper/config.toml).
