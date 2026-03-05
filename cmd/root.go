@@ -199,7 +199,8 @@ func doStream(ctx context.Context, p provider.Provider, req *provider.Request, s
 		return 3
 	}
 
-	var lastContent string
+	var wroteContent bool
+	var lastByte byte
 	for ev := range ch {
 		if ev.Err != nil {
 			fmt.Fprintf(stderr, "\npiper: %v\n", ev.Err)
@@ -207,10 +208,11 @@ func doStream(ctx context.Context, p provider.Provider, req *provider.Request, s
 		}
 		if ev.Delta != "" {
 			fmt.Fprint(stdout, ev.Delta)
-			lastContent = ev.Delta
+			wroteContent = true
+			lastByte = ev.Delta[len(ev.Delta)-1]
 		}
 		if ev.Done {
-			if !strings.HasSuffix(lastContent, "\n") {
+			if wroteContent && lastByte != '\n' {
 				fmt.Fprintln(stdout)
 			}
 			if verbose {
