@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -36,6 +37,7 @@ Examples:
   cat README.md | piper "summarize in 3 bullets"
   git diff main | piper "review for bugs"
   echo "hello" | piper -m gpt-4o -p openai "respond"
+  piper -i "you are a python expert"
 
 Flags:
   -m, --model     string   Model (default: claude-sonnet-4-20250514)
@@ -43,6 +45,7 @@ Flags:
   -t, --tokens    int      Max output tokens (default: 4096)
   -p, --provider  string   Provider: anthropic, openai (default: anthropic)
       --base-url  string   API base URL (for OpenAI-compat providers)
+  -i, --interactive        Multi-turn conversation mode (requires TTY)
   -r, --raw                Disable markdown rendering, raw text (default)
       --no-stream          Disable streaming
   -v, --verbose            Metadata to stderr
@@ -59,6 +62,7 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 	tokensFlag := fs.IntP("tokens", "t", 0, "Max output tokens")
 	providerFlag := fs.StringP("provider", "p", "", "Provider: anthropic, openai")
 	baseURLFlag := fs.String("base-url", "", "API base URL")
+	interactiveFlag := fs.BoolP("interactive", "i", false, "Multi-turn conversation mode")
 	_ = fs.BoolP("raw", "r", true, "Disable markdown rendering")
 	noStream := fs.Bool("no-stream", false, "Disable streaming")
 	verbose := fs.BoolP("verbose", "v", false, "Metadata to stderr")
@@ -78,7 +82,13 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 	isTTY := isTerminal(stdin)
 	positional := fs.Args()
 
-	if isTTY && len(positional) == 0 {
+	// Interactive mode requires a TTY.
+	if *interactiveFlag && !isTTY {
+		fmt.Fprintln(stderr, "piper: --interactive requires stdin to be a terminal")
+		return 1
+	}
+
+	if !*interactiveFlag && isTTY && len(positional) == 0 {
 		fmt.Fprintln(stderr, usage)
 		return 1
 	}
@@ -120,6 +130,21 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 		return 2
 	}
 
+	// Create provider.
+	p, err := provider.New(providerName, apiKey, baseURL)
+	if err != nil {
+		fmt.Fprintf(stderr, "piper: %v\n", err)
+		return 2
+	}
+
+	if *verbose {
+		fmt.Fprintf(stderr, "provider=%s model=%s max_tokens=%d\n", providerName, model, maxTokens)
+	}
+
+	if *interactiveFlag {
+		return runInteractive(ctx, p, stdin, stdout, stderr, model, system, maxTokens, positional, *verbose)
+	}
+
 	// Read stdin.
 	var stdinContent string
 	if !isTTY {
@@ -139,13 +164,6 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 		return 1
 	}
 
-	// Create provider.
-	p, err := provider.New(providerName, apiKey, baseURL)
-	if err != nil {
-		fmt.Fprintf(stderr, "piper: %v\n", err)
-		return 2
-	}
-
 	req := &provider.Request{
 		Model:     model,
 		System:    system,
@@ -155,16 +173,108 @@ func Run(ctx context.Context, args []string, stdin *os.File, stdout, stderr io.W
 		},
 	}
 
-	if *verbose {
-		fmt.Fprintf(stderr, "provider=%s model=%s max_tokens=%d\n", providerName, model, maxTokens)
-	}
-
 	start := time.Now()
 
 	if *noStream {
 		return doComplete(ctx, p, req, stdout, stderr, *verbose, start)
 	}
 	return doStream(ctx, p, req, stdout, stderr, *verbose, start)
+}
+
+// runInteractive runs a multi-turn conversation REPL on the terminal.
+func runInteractive(ctx context.Context, p provider.Provider, stdin *os.File, stdout, stderr io.Writer, model, system string, maxTokens int, initialArgs []string, verbose bool) int {
+	var messages []provider.Message
+
+	// If positional args were given, use them as the first user message.
+	if len(initialArgs) > 0 {
+		firstMsg := strings.Join(initialArgs, " ")
+		messages = append(messages, provider.Message{Role: "user", Content: firstMsg})
+		reply, code := sendAndCollect(ctx, p, stdout, stderr, model, system, maxTokens, messages, verbose)
+		if code != 0 {
+			return code
+		}
+		messages = append(messages, provider.Message{Role: "assistant", Content: reply})
+	}
+
+	scanner := bufio.NewScanner(stdin)
+	for {
+		fmt.Fprint(stderr, "\n>>> ")
+		if !scanner.Scan() {
+			// EOF or error — exit cleanly.
+			fmt.Fprintln(stdout)
+			if err := scanner.Err(); err != nil {
+				fmt.Fprintf(stderr, "piper: read error: %v\n", err)
+				return 1
+			}
+			return 0
+		}
+		if ctx.Err() != nil {
+			return 4
+		}
+
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		messages = append(messages, provider.Message{Role: "user", Content: line})
+		reply, code := sendAndCollect(ctx, p, stdout, stderr, model, system, maxTokens, messages, verbose)
+		if code != 0 {
+			return code
+		}
+		messages = append(messages, provider.Message{Role: "assistant", Content: reply})
+	}
+}
+
+// sendAndCollect streams a response and returns the full assistant text.
+func sendAndCollect(ctx context.Context, p provider.Provider, stdout, stderr io.Writer, model, system string, maxTokens int, messages []provider.Message, verbose bool) (string, int) {
+	req := &provider.Request{
+		Model:     model,
+		System:    system,
+		MaxTokens: maxTokens,
+		Messages:  messages,
+	}
+
+	start := time.Now()
+	ch, err := p.Stream(ctx, req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", 4
+		}
+		fmt.Fprintf(stderr, "piper: %v\n", err)
+		return "", 3
+	}
+
+	var sb strings.Builder
+	var lastDelta string
+	for ev := range ch {
+		if ev.Err != nil {
+			fmt.Fprintf(stderr, "\npiper: %v\n", ev.Err)
+			return "", 3
+		}
+		if ev.Delta != "" {
+			fmt.Fprint(stdout, ev.Delta)
+			sb.WriteString(ev.Delta)
+			lastDelta = ev.Delta
+		}
+		if ev.Done {
+			if !strings.HasSuffix(lastDelta, "\n") {
+				fmt.Fprintln(stdout)
+			}
+			if verbose {
+				fmt.Fprintf(stderr, "latency=%s input_tokens=%d output_tokens=%d\n",
+					time.Since(start).Round(time.Millisecond), ev.InputTokens, ev.OutputTokens)
+			}
+			return sb.String(), 0
+		}
+	}
+
+	if ctx.Err() != nil {
+		fmt.Fprintln(stdout)
+		return sb.String(), 4
+	}
+	fmt.Fprintln(stdout)
+	return sb.String(), 0
 }
 
 func doComplete(ctx context.Context, p provider.Provider, req *provider.Request, stdout, stderr io.Writer, verbose bool, start time.Time) int {
