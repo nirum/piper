@@ -142,3 +142,87 @@ func newTestAnthropic(apiKey, baseURL string) *Anthropic {
 		baseURL: baseURL,
 	}
 }
+
+func TestAnthropic_StreamErrorEvent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		fmt.Fprintln(w, `data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`)
+		fmt.Fprintln(w)
+		flusher.Flush()
+	}))
+	defer server.Close()
+
+	a := newTestAnthropic("test-key", server.URL)
+	ch, err := a.Stream(context.Background(), &Request{
+		Model:     "claude-sonnet-4-20250514",
+		MaxTokens: 100,
+		Messages:  []Message{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream() error: %v", err)
+	}
+
+	var gotErr bool
+	for ev := range ch {
+		if ev.Err != nil {
+			gotErr = true
+		}
+	}
+	if !gotErr {
+		t.Error("expected stream error event, got none")
+	}
+}
+
+func TestAnthropic_StreamContextCancel(t *testing.T) {
+	ready := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		fmt.Fprintln(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":1}}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}`)
+		fmt.Fprintln(w)
+		flusher.Flush()
+		close(ready)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	a := newTestAnthropic("test-key", server.URL)
+	ch, err := a.Stream(ctx, &Request{
+		Model:     "claude-sonnet-4-20250514",
+		MaxTokens: 100,
+		Messages:  []Message{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream() error: %v", err)
+	}
+
+	<-ready
+	cancel()
+	// Drain channel — must close without deadlock.
+	for range ch {
+	}
+}
+
+func TestAnthropic_StreamNonOKStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":{"type":"authentication_error","message":"Invalid API key"}}`)
+	}))
+	defer server.Close()
+
+	a := newTestAnthropic("bad-key", server.URL)
+	_, err := a.Stream(context.Background(), &Request{
+		Model:     "claude-sonnet-4-20250514",
+		MaxTokens: 100,
+		Messages:  []Message{{Role: "user", Content: "hello"}},
+	})
+	if err == nil {
+		t.Fatal("expected error from Stream(), got nil")
+	}
+}
