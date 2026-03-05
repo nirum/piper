@@ -208,7 +208,10 @@ func (o *OpenAI) readSSE(ctx context.Context, body io.ReadCloser, ch chan<- Stre
 }
 
 func (o *OpenAI) parseError(resp *http.Response) error {
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("openai API error (%d): read body: %w", resp.StatusCode, err)
+	}
 
 	var apiErr openaiError
 	if json.Unmarshal(bodyBytes, &apiErr) == nil && apiErr.Error.Message != "" {
